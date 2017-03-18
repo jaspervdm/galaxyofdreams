@@ -1,0 +1,15 @@
+{
+  "name": "kebabtent/galaxyofdreams",
+  "description": "Liquicity discord bot",
+  "require": {
+    "team-reflex/discord-php": "^4.0",
+    "hassankhan/config": "^0.10.0",
+    "react/http": "^0.6.0",
+    "phpgt/dom": "^0.3.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "Kebabtent\\GalaxyOfDreams\\": "src/"
+    }
+  }
+}
