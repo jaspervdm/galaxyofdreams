@@ -1,11 +1,12 @@
 <?php
 namespace Kebabtent\GalaxyOfDreams\Modules\YoutubeNotify;
 
-use Discord\Parts\Channel\Channel as DiscordChannel;
+use Kebabtent\GalaxyOfDreams\Bot;
+use Discord\Parts\Channel\Channel;
 use Psr\Log\LoggerInterface;
 use Exception;
 
-class Channel {
+class VideoChannel {
   static $STATUS_UNSUBSCRIBED = 1;
   static $STATUS_SUBSCRIBED = 2;
   static $STATUS_VERIFY = 3;
@@ -36,52 +37,69 @@ class Channel {
   protected $expire;
 
   /**
-   * @var DiscordChannel[]
+   * @var Channel[]
    */
-  protected $announceChannels;
+  protected $channels;
 
   /**
    * @var string
    */
   protected $message;
 
+  /**
+   * @var string
+   */
+  protected $last;
+
   public function __construct($logger, $id) {
     $this->logger = $logger;
     $this->id = $id;
     $this->setStatus(self::$STATUS_UNSUBSCRIBED);
     $this->expire = 0;
-    $this->announceChannels = [];
+    $this->channels = [];
     $this->message = "New upload: https://youtu.be/%ID%";
+    $this->last = "";
   }
 
   /**
    * Announce new upload
+   * @param Bot $bot
    * @param int $id
    */
-  public function announce($id) {
-//    $this->logger->debug("Announcing ".$id." to ".$this->id, ["YoutubeNotify"]);
-    foreach ($this->announceChannels as $announceChannel) {
-      $announceChannel->sendMessage(str_replace("%ID%", $id, $this->message))->then(function () use (&$id) {
-        $this->logger->warning("Announced ".$id." to ".$this->id, ["YoutubeNotify"]);
-      }, function (Exception $e) use (&$id) {
-        $this->logger->warning("Unable to announce ".$id." to ".$this->id." (".$e->getMessage().")", ["YoutubeNotify"]);
+  public function announce($bot, $id) {
+    if ($this->last == $id) {
+      $this->logger->warning("Duplicated announcement for ".$id, ["YoutubeNotify"]);
+      return;
+    }
+    $this->last = $id;
+
+    foreach ($this->channels as $channel) {
+      $bot->execute(function () use ($channel, &$id) {
+        return $channel->sendMessage(str_replace("%ID%", $id, $this->message));
+      }, function () use (&$id, $channel) {
+        $this->logger->info("Announced ".$id." to ".$channel->name, ["YoutubeNotify"]);
+      }, function (Exception $e, $timeout) use (&$id, $channel) {
+        $this->logger->warning("Unable to announce ".$id." to ".$channel->name." (".$e->getMessage().") retry in ".$timeout."s", ["YoutubeNotify"]);
+      }, function (Exception $e) use (&$id, $channel) {
+        $this->logger->warning("Unable to announce ".$id." to ".$channel->name." (".$e->getMessage().")", ["YoutubeNotify"]);
       });
     }
   }
 
   /**
    * Add discord channel to announce uploads in
-   * @param DiscordChannel $announceChannel
+   * @param Channel $channel
    */
-  public function addAnnounceChannel($announceChannel) {
-    $this->announceChannels[] = $announceChannel;
+  public function addChannel($channel) {
+    $this->logger->info("Add announce channel ".$channel->name." to ".$this->id, ["YoutubeNotify"]);
+    $this->channels[] = $channel;
   }
 
   /**
-   * @return DiscordChannel[]
+   * @return Channel[]
    */
-  public function getAnnounceChannels() {
-    return $this->announceChannels;
+  public function getChannels() {
+    return $this->channels;
   }
 
   public function setMessage($message) {

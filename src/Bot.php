@@ -1,6 +1,8 @@
 <?php
 namespace Kebabtent\GalaxyOfDreams;
 
+use Discord\Parts\Channel\Channel;
+use Discord\Parts\Channel\Message;
 use Evenement\EventEmitter;
 use Psr\Log\LoggerInterface;
 use Noodlehaus\ConfigInterface;
@@ -8,6 +10,8 @@ use React\EventLoop\LoopInterface;
 use React\EventLoop\Factory;
 use Kebabtent\GalaxyOfDreams\Modules\ModuleInterface;
 use Discord\Discord;
+use Discord\Repository\GuildRepository;
+use Discord\Parts\Guild\Guild;
 use Exception;
 
 class Bot extends EventEmitter {
@@ -42,6 +46,11 @@ class Bot extends EventEmitter {
   protected $modules;
 
   /**
+   * @var bool
+   */
+  protected $isReady;
+
+  /**
    * Create bot instance
    * @param ConfigInterface $config
    * @param LoggerInterface $logger
@@ -56,6 +65,12 @@ class Bot extends EventEmitter {
       "loop" => $this->loop,
       "logger" => $this->logger
     ]);
+
+    $this->isReady = false;
+    $this->on("discord.ready", function () {
+      $this->ready();
+    });
+
 
     $this->logger->debug("Bot constructed");
   }
@@ -99,6 +114,100 @@ class Bot extends EventEmitter {
     return $this->modules[$name];
   }
 
+  protected function ready() {
+    $this->isReady = true;
+  }
+
+  /**
+   * Execute $callback when Discord instance is ready
+   * @param callable $callback
+   */
+  public function whenReady(callable $callback) {
+    if ($this->isReady) {
+      // Is ready? Call immediately
+      call_user_func($callback, $this);
+    }
+    else {
+      // Else, trigger on ready
+      $this->once("discord.ready", $callback);
+    }
+  }
+
+  /**
+   * Fetch a discord channel async
+   * @param string $name Format guildName/channelName
+   * @param callable $onFulfilled
+   * @param callable $onRejected
+   */
+  public function fetchChannel($name, callable $onFulfilled, callable $onRejected) {
+    try {
+      @list($guildName, $channelName) = explode("/", $name);
+      if (empty($guildName) || is_null($channelName) || empty($channelName)) {
+        throw new Exception("Channel name not of the form GuildName/ChannelName");
+      }
+
+      $guilds = $this->config->get("guilds");
+      if (!isset($guilds[$guildName]) || !isset($guilds[$guildName]['channels'])) {
+        throw new Exception("Guild ".$guildName." not found in config");
+      }
+
+      $guildId = $guilds[$guildName]['guild_id'];
+      $channels = $guilds[$guildName]['channels'];
+
+      if (!isset($channels[$channelName])) {
+        throw new Exception("Channel ".$channelName." not found in config");
+      }
+
+      $channelId = $channels[$channelName]['channel_id'];
+
+      $this->whenReady(function (Discord $discord) use (&$guildId, &$channelId, $onFulfilled, $onRejected) {
+        $guilds = $discord->guilds; /** @var GuildRepository $guilds */
+
+        $guilds->fetch($guildId)->then(function (Guild $guild) use (&$channelId, $onFulfilled, $onRejected) {
+          $guild->channels->fetch($channelId)->then(function (Channel $channel) use ($onFulfilled) {
+            call_user_func($onFulfilled, $channel);
+          }, function (Exception $e) use ($onRejected) {
+            call_user_func($onRejected, $e);
+          });
+        }, function (Exception $e) use ($onRejected) {
+          call_user_func($onRejected, $e);
+        });
+      });
+    }
+    catch (Exception $e) {
+      call_user_func($onRejected, $e);
+    }
+  }
+
+  /**
+   * Execute a command
+   * @param callable $callable Should return a promise
+   * @param callable $onFulfilled To be caleld when executed
+   * @param callable $onRetry To be called every time execution fails and will retry
+   * @param callable $onRejected To be called when execution failed $attempts times
+   * @param int $timeout Timeout in seconds between attempts
+   * @param int $attempts Number of attempts
+   */
+  public function execute(callable $callable, callable $onFulfilled, callable $onRetry, callable $onRejected, $timeout = 10, $attempts = 3) {
+    $promise = call_user_func($callable);
+    $promise->then($onFulfilled, function (Exception $e) use ($callable, $onFulfilled, $onRetry, $onRejected, &$timeout, &$attempts) {
+      if ($attempts <= 1) {
+        call_user_func($onRejected, $e);
+      }
+      else {
+        call_user_func($onRetry, $e, $timeout);
+      }
+      $this->loop->addTimer($timeout, function () use ($callable, $onFulfilled, $onRetry, $onRejected, &$timeout, &$attempts) {
+        $this->execute($callable, $onFulfilled, $onRetry, $onRejected, $timeout, $attempts-1);
+      });
+    });
+  }
+
+  /**
+   * Callback on event
+   * @param string $event
+   * @param callable $listener
+   */
   public function on($event, callable $listener) {
     if (preg_match("/discord.(.*)/i", $event, $match)) {
       $discordEventName = $match[1];
@@ -110,8 +219,13 @@ class Bot extends EventEmitter {
     parent::on($event, $listener);
   }
 
+  /**
+   * Gets triggered on discord event
+   * @param $name
+   * @param array $args
+   */
   public function discordEvent($name, $args = []) {
-    $this->logger->info("Triggered event ".$name." with ".count($args)." arguments");
+    $this->logger->debug("Triggered event ".$name." with ".count($args)." arguments");
     $this->emit("discord.".$name, $args);
   }
 

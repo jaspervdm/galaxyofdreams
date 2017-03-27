@@ -1,7 +1,7 @@
 <?php
 namespace Kebabtent\GalaxyOfDreams\Modules;
 
-use Kebabtent\GalaxyOfDreams\Modules\YoutubeNotify\Channel;
+use Kebabtent\GalaxyOfDreams\Modules\YoutubeNotify\VideoChannel;
 use React\Http\Request;
 use React\Http\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -10,7 +10,7 @@ use Gt\Dom\XMLDocument;
 use Discord\Discord;
 use Discord\Repository\GuildRepository;
 use Discord\Parts\Guild\Guild;
-use Discord\Parts\Channel\Channel as DiscordChannel;
+use Discord\Parts\Channel\Channel;
 use Exception;
 
 class YoutubeNotify implements ModuleInterface {
@@ -37,49 +37,46 @@ class YoutubeNotify implements ModuleInterface {
   protected $loop;
 
   /**
-   * @var Channel[]
+   * @var VideoChannel[]
    */
-  protected $channels;
+  protected $videoChannels;
 
+  /**
+   * @inheritdoc
+   */
   public function getName() {
     return "YoutubeNotify";
   }
 
+  /**
+   * @inheritdoc
+   */
   public function __construct($bot, $config, $logger) {
     $this->bot = $bot;
     $this->config = $config;
     $this->logger = $logger;
-    $this->loop = $bot->getLoop();
-    $this->channels = [];
+    $this->loop = $this->bot->getLoop();
+    $this->videoChannels = [];
 
-    foreach ($config['channels'] as $channelConfig) {
-      $channel = new Channel($this->logger, $channelConfig['id']);
-      if (isset($channelConfig['message'])) {
-        $channel->setMessage($channelConfig['message']);
-      }
+    if (isset($config['video_channels'])) {
+      foreach ($config['video_channels'] as $videoChannelConfig) {
+        $videoChannel = new VideoChannel($this->logger, $videoChannelConfig['id']);
+        if (isset($videoChannelConfig['message'])) {
+          $videoChannel->setMessage($videoChannelConfig['message']);
+        }
 
-      $this->channels[$channel->getId()] = $channel;
+        $this->videoChannels[$videoChannel->getId()] = $videoChannel;
 
-      $this->bot->getDiscord()->on("ready", function (Discord $discord) use ($channel, &$channelConfig) {
-        $guilds = $discord->guilds; /** @var GuildRepository $guilds */
+        foreach ($videoChannelConfig['channels'] as $channelName) {
+          $this->addAnnounceChannel($videoChannel, $channelName);
+        }
 
-        foreach ($channelConfig['announce_channels'] as $announce) {
-          $guilds->fetch($announce['guild_id'])->then(function (Guild $guild) use ($channel, &$announce) {
-            $guild->channels->fetch($announce['channel_id'])->then(function (DiscordChannel $discordChannel) use ($channel, &$announce) {
-              $channel->addAnnounceChannel($discordChannel);
-              $this->logger->debug("Add announce channel ".$announce['guild_id']."/".$announce['channel_id'], ["YoutubeNotify"]);
-            }, function (Exception $e) use (&$announce) {
-              $this->logger->warning("Unable to fetch channel ".$announce['channel_id']." (".$e->getMessage().")", ["YoutubeNotify"]);
-            });
-          }, function (Exception $e) use (&$announce) {
-            $this->logger->warning("Unable to fetch guild ".$announce['guild_id']." (".$e->getMessage().")", ["YoutubeNotify"]);
+        if (!isset($config['subscribe']) || $config['subscribe']) {
+          $this->loop->futureTick(function () use ($videoChannel) {
+            $this->subscribe($videoChannel);
           });
         }
-      });
-
-      $this->loop->futureTick(function () use ($channel) {
-        $this->subscribe($channel);
-      });
+      }
     }
 
 
@@ -90,12 +87,28 @@ class YoutubeNotify implements ModuleInterface {
   }
 
   /**
-   * @param Channel $channel
+   * Add a discord announce channel to a video channel
+   * @param VideoChannel $videoChannel
+   * @param string $channelName
+   */
+  public function addAnnounceChannel($videoChannel, $channelName) {
+    $this->bot->fetchChannel($channelName, function(Channel $channel) use ($videoChannel) {
+      $videoChannel->addChannel($channel);
+    }, function (Exception $e) use ($videoChannel, &$channelName) {
+      $this->logger->warning("Unable to fetch announce channel ".$channelName." (".$e->getMessage()."), retry in 10 seconds", ["YoutubeNotify"]);
+      $this->bot->getLoop()->addTimer(10, function () use ($videoChannel, &$channelName) {
+        $this->addAnnounceChannel($videoChannel, $channelName);
+      });
+    });
+  }
+
+  /**
+   * @param VideoChannel $channel
    */
   public function subscribe($channel) {
     $this->logger->info("Subscribing to ".$channel->getId(), ["YoutubeNotify"]);
 
-    $channel->setStatus(Channel::$STATUS_VERIFY);
+    $channel->setStatus(VideoChannel::$STATUS_VERIFY);
 
     $client = $this->bot->getModule("HTTPClient"); /** @var HTTPClient $client */
     $client->postAsync("https://pubsubhubbub.appspot.com/subscribe", ["form_params" => [
@@ -155,15 +168,15 @@ class YoutubeNotify implements ModuleInterface {
       }
 
       $id = $match[1];
-      if (!isset($this->channels[$id])) {
+      if (!isset($this->videoChannels[$id])) {
         $this->logger->warning("Received unknown channel ".$id, ["YoutubeNotify"]);
         $this->giveResponse($response, 404);
         return;
       }
 
-      $channel = $this->channels[$id];
+      $channel = $this->videoChannels[$id];
 
-      if ($channel->getStatus() != Channel::$STATUS_VERIFY) {
+      if ($channel->getStatus() != VideoChannel::$STATUS_VERIFY) {
         $this->logger->warning("Channel ".$id." not in verify mode", ["YoutubeNotify"]);
         $this->giveResponse($response, 404);
         return;
@@ -188,7 +201,7 @@ class YoutubeNotify implements ModuleInterface {
 
       $this->logger->info("Channel ".$id." subscribed, expire in ".$lease."s", ["YoutubeNotify"]);
 
-      $channel->setStatus(Channel::$STATUS_SUBSCRIBED);
+      $channel->setStatus(VideoChannel::$STATUS_SUBSCRIBED);
       $channel->setExpire($lease);
 
       $this->loop->addTimer($channel->getTimeToExpire()-600, function() use ($channel) {
@@ -222,14 +235,14 @@ class YoutubeNotify implements ModuleInterface {
       $channelId = $channelIdNode->textContent;
       $videoId = $videoIdNode->textContent;
 
-      $channel = $this->channels[$channelId];
+      $channel = $this->videoChannels[$channelId];
       if (!$channel) {
         $this->logger->warning("Received upload from unknown channel ".$channelId, ["YoutubeNotify"]);
         continue;
       }
 
       $this->loop->futureTick(function () use ($channel, &$channelId, &$videoId) {
-        $channel->announce($videoId);
+        $channel->announce($this->bot, $videoId);
       });
     }
 
@@ -237,10 +250,16 @@ class YoutubeNotify implements ModuleInterface {
     $this->giveResponse($response, 200);
   }
 
+  /**
+   * @inheritdoc
+   */
   public static function create($bot, $config, $logger) {
     return new self($bot, $config, $logger);
   }
 
+  /**
+   * @inheritdoc
+   */
   public static function requires() {
     return ["HTTPClient", "HTTPServer"];
   }
