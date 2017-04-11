@@ -3,11 +3,9 @@ namespace Kebabtent\GalaxyOfDreams\Modules;
 
 use Discord\Discord;
 use Discord\Parts\Channel\Message;
-use Discord\Parts\Embed\Embed;
+
 use Discord\Parts\Embed\Image;
-use Discord\Parts\Embed\Video;
-use Discord\Parts\Embed\Author;
-use Exception;
+use Discord\Parts\Embed\Embed;
 
 class Admin implements ModuleInterface {
   /**
@@ -34,11 +32,20 @@ class Admin implements ModuleInterface {
     $this->config = $config;
     $this->logger = $logger;
 
+    $this->bot->on("discord.admin.command", [$this, "onAdminMessage"]);
+
     $this->bot->on("discord.message", function (Message $message, Discord $discord) {
       $admins = isset($this->config['admins']) ? $this->config['admins'] : [];
       if (in_array($message->author->id, $admins)) {
-        $this->bot->emit("discord.admin.message", [$message, $discord]);
-        $this->onAdminMessage($message, $discord);
+        $parts = explode(" ", $message->content);
+        $command = array_shift($parts);
+
+        if (preg_match("/!(.*)/", $command, $match)) {
+          $this->bot->emit("discord.admin.command", [$message, $discord, $match[1], $parts]);
+        }
+        else {
+          $this->bot->emit("discord.admin.message", [$message, $discord]);
+        }
       }
     });
   }
@@ -46,12 +53,11 @@ class Admin implements ModuleInterface {
   /**
    * @param Message $message
    * @param Discord $discord
+   * @param string $command
+   * @param array $parts
    */
-  public function onAdminMessage($message, $discord) {
-    $parts = explode(" ", $message->content);
-    $command = reset($parts);
-
-    if ($command == "!stop") {
+  public function onAdminMessage($message, $discord, $command, $parts) {
+    if ($command == "stop") {
       $message->channel->sendMessage("Goodbye!")->always(function () {
         $this->bot->emit("shutdown");
         $this->logger->info("Closing server..", ["Admin"]);
@@ -62,7 +68,7 @@ class Admin implements ModuleInterface {
         $this->bot->getDiscord()->close();
       });
     }
-    elseif ($command == "!restart") {
+    elseif ($command == "restart") {
       $message->channel->sendMessage("BRB!")->always(function () {
         $this->bot->emit("shutdown");
         $this->logger->info("Closing server..", ["Admin"]);

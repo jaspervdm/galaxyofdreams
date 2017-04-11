@@ -7,9 +7,6 @@ use React\Http\Response;
 use Psr\Http\Message\ResponseInterface;
 use GuzzleHttp\Exception\RequestException;
 use Gt\Dom\XMLDocument;
-use Discord\Discord;
-use Discord\Repository\GuildRepository;
-use Discord\Parts\Guild\Guild;
 use Discord\Parts\Channel\Channel;
 use Exception;
 
@@ -216,7 +213,6 @@ class YoutubeNotify implements ModuleInterface {
     $entries = $dom->getElementsByTagName("entry");
 
     if ($entries->length == 0) {
-      file_put_contents("logs/".time().".log", $body);
       $this->logger->warning("Received unparsed callback", ["YoutubeNotify"]);
       $this->giveResponse($response, 404);
       return;
