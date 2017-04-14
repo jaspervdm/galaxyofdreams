@@ -2,7 +2,6 @@
 namespace Kebabtent\GalaxyOfDreams\Modules;
 
 use Kebabtent\GalaxyOfDreams\Config;
-use Facebook\Facebook;
 use Kebabtent\GalaxyOfDreams\Modules\FacebookNotify\Client;
 use Kebabtent\GalaxyOfDreams\Modules\FacebookNotify\Page;
 use Discord\Parts\Channel\Channel;
@@ -40,6 +39,11 @@ class FacebookNotify implements ModuleInterface {
   protected $pages;
 
   /**
+   * @var string[]
+   */
+  protected $lastYoutube;
+
+  /**
    * @var Client
    */
   protected $client;
@@ -73,22 +77,43 @@ class FacebookNotify implements ModuleInterface {
     $this->pages = [];
     $pages = $this->storage->has("pages") && is_array($this->storage->get("pages")) ? $this->storage->get("pages") : [];
     foreach ($pages as $pageConfig) {
-      $page = new Page($this->logger, $pageConfig);
+      $page = new Page($this->logger, $this, $pageConfig);
 
       $this->pages[$page->getId()] = $page;
 
-      if (isset($pageConfig['channels'])) {
-        foreach ($pageConfig['channels'] as $channelName) {
-          $this->addAnnounceChannel($page, $channelName);
-        }
+      foreach ($page->getChannelNames() as $channelName) {
+        $this->addAnnounceChannel($page, $channelName);
       }
     }
+
+    $this->lastYoutube = $this->storage->has("last_youtube") && is_array($this->storage->get("last_youtube")) ? $this->storage->get("last_youtube") : [];
+
+    $this->bot->on("youtube.upload", [$this, "onYoutubeUpload"]);
 
     $this->bot->whenReady(function () {
       $this->bot->getLoop()->addTimer(10, [$this, "check"]);
     });
   }
 
+  /**
+   * This gets called when the YoutubeNotify module finds a new upload
+   * @param string $videoChannelId
+   * @param string $videoId
+   */
+  public function onYoutubeUpload($videoChannelId, $videoId) {
+    $this->logger->debug("Caught video ".$videoId." to channel ".$videoChannelId);
+    $this->lastYoutube[$videoChannelId] = $videoId;
+    $this->saveStorage();
+  }
+
+  /**
+   * Get array of last ID for a specific channel
+   * @param string $videoChannelName
+   * @return string|null
+   */
+  public function getLastYoutube($videoChannelName) {
+    return isset($this->lastYoutube[$videoChannelName]) ? $this->lastYoutube[$videoChannelName] : null;
+  }
 
   /**
    * Add a discord announce channel to a facebook page
@@ -96,8 +121,8 @@ class FacebookNotify implements ModuleInterface {
    * @param string $channelName
    */
   public function addAnnounceChannel($page, $channelName) {
-    $this->bot->fetchChannel($channelName, function(Channel $channel) use ($page) {
-      $page->addChannel($channel);
+    $this->bot->fetchChannel($channelName, function(Channel $channel) use ($page, &$channelName) {
+      $page->addChannel($channelName, $channel);
     }, function (Exception $e) use ($page, &$channelName) {
       $this->logger->warning("Unable to fetch announce channel ".$channelName." (".$e->getMessage()."), retry in 10 seconds", ["FacebookNotify"]);
       $this->bot->getLoop()->addTimer(10, function () use ($page, &$channelName) {
@@ -115,11 +140,14 @@ class FacebookNotify implements ModuleInterface {
   }
 
   public function saveStorage() {
+    $this->logger->debug("Saving to storage..", ["FacebookNotify"]);
+
     $pages = [];
     foreach ($this->pages as $page) {
       $pages[] = $page->getConfig();
     }
     $this->storage->set("pages", $pages);
+    $this->storage->set("last_youtube", $this->lastYoutube);
     $this->storage->save();
   }
 
@@ -142,58 +170,6 @@ class FacebookNotify implements ModuleInterface {
     }
 
     $this->loop->addTimer(120, [$this, "check"]);
-
-    /*foreach ($this->pages as $page) {
-      // Find name
-      if (!$page->hasName()) {
-        try {
-          $data = $this->facebook->get("/".$page->getId())->getDecodedBody();
-          if (!isset($data['name'])) {
-            throw new Exception("Field not found");
-          }
-          $page->setName($data['name']);
-          $this->logger->info("Found name for page ".$page->getId().": ".$page->getName(), ["FacebookNotify"]);
-        }
-        catch (Exception $e) {
-          $this->logger->warning("Unable to update name for page ".$page->getId()." (".$e->getMessage().")", ["FacebookNotify"]);
-          continue;
-        }
-      }
-
-      // Update events
-      try {
-        $latestEvent = $page->getLatestEvent();
-        $data = $this->facebook->get("/".$page['id']."/events?fields=name,description,cover")->getDecodedBody();
-        $newEvents = [];
-        foreach ($data['data'] as $event) {
-          if ($latestEvent != $event['id']) {
-            // New event
-            $newEvents[] = $event;
-          }
-
-          if (!$latestEvent || $latestEvent == $event['id']) {
-            break;
-          }
-        }
-
-        $newEvents = array_reverse($newEvents);
-        $newEventCount = count($newEvents);
-        $i = 0;
-        foreach ($newEvents as $event) {
-          $page->announceEvent($this->bot, $event);
-
-          $i++;
-          if ($i == $newEventCount) {
-            // Last
-            $page->setLatestEvent($event['id']);
-          }
-        }
-      }
-      catch (Exception $e) {
-        $this->logger->warning("Unable to update events for page ".$page->getId()." (".$e->getMessage().")", ["FacebookNotify"]);
-      }
-    }
-    $this->saveStorage();*/
   }
 
   /**

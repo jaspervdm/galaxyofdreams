@@ -231,13 +231,14 @@ class YoutubeNotify implements ModuleInterface {
       $channelId = $channelIdNode->textContent;
       $videoId = $videoIdNode->textContent;
 
-      $channel = $this->videoChannels[$channelId];
-      if (!$channel) {
+      if (!isset($this->videoChannels[$channelId])) {
         $this->logger->warning("Received upload from unknown channel ".$channelId, ["YoutubeNotify"]);
         continue;
       }
+      $channel = $this->videoChannels[$channelId];
 
       $this->loop->futureTick(function () use ($channel, &$channelId, &$videoId) {
+        $this->bot->emit("youtube.upload", [$channelId, $videoId]);
         $channel->announce($this->bot, $videoId);
       });
     }

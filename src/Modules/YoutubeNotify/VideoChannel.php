@@ -2,6 +2,7 @@
 namespace Kebabtent\GalaxyOfDreams\Modules\YoutubeNotify;
 
 use Kebabtent\GalaxyOfDreams\Bot;
+use Kebabtent\GalaxyOfDreams\Modules\FacebookNotify;
 use Discord\Parts\Channel\Channel;
 use Psr\Log\LoggerInterface;
 use Exception;
@@ -59,6 +60,14 @@ class VideoChannel {
     $this->channels = [];
     $this->message = "New upload: https://youtu.be/%ID%";
     $this->last = "";
+  }
+
+  /**
+   * Get last announced video ID
+   * @return string
+   */
+  public function getLast() {
+    return $this->last;
   }
 
   /**

@@ -58,7 +58,9 @@ class Admin implements ModuleInterface {
    */
   public function onAdminMessage($message, $discord, $command, $parts) {
     if ($command == "stop") {
-      $message->channel->sendMessage("Goodbye!")->always(function () {
+      $message->channel->sendMessage("Goodbye!");
+
+      $this->bot->getLoop()->addTimer(1, function () {
         $this->bot->emit("shutdown");
         $this->logger->info("Closing server..", ["Admin"]);
         $this->bot->on("discord.closed", function () {
@@ -69,7 +71,9 @@ class Admin implements ModuleInterface {
       });
     }
     elseif ($command == "restart") {
-      $message->channel->sendMessage("BRB!")->always(function () {
+      $message->channel->sendMessage("BRB!");
+
+      $this->bot->getLoop()->addTimer(1, function () {
         $this->bot->emit("shutdown");
         $this->logger->info("Closing server..", ["Admin"]);
         $this->bot->on("discord.closed", function () {

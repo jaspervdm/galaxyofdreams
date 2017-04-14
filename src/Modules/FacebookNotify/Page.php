@@ -4,6 +4,7 @@ namespace Kebabtent\GalaxyOfDreams\Modules\FacebookNotify;
 use Discord\Parts\Embed\Embed;
 use Discord\Parts\Embed\Image;
 use Kebabtent\GalaxyOfDreams\LargeInt;
+use Kebabtent\GalaxyOfDreams\Modules\FacebookNotify;
 use Psr\Log\LoggerInterface;
 use Kebabtent\GalaxyOfDreams\Bot;
 use Discord\Parts\Channel\Channel;
@@ -16,6 +17,11 @@ class Page {
   protected $logger;
 
   /**
+   * @var FacebookNotify
+   */
+  protected $module;
+
+  /**
    * Stores the page id
    * @var string
    */
@@ -26,6 +32,11 @@ class Page {
    * @var string
    */
   protected $name;
+
+  /**
+   * Stores the channels to ignore the latest announced video from (announcement done by YoutubeNotify)
+   */
+  protected $ignoreLastYoutubeFrom;
 
   /**
    * Stores the id of the latest post
@@ -53,7 +64,17 @@ class Page {
   /**
    * @var string[]
    */
-  protected $channelConfig;
+  protected $postChannels;
+
+  /**
+   * @var string[]
+   */
+  protected $eventChannels;
+
+  /**
+   * @var string[]
+   */
+  protected $eventPostChannels;
 
   /**
    * @var Channel[]
@@ -62,15 +83,24 @@ class Page {
 
   /**
    * @param LoggerInterface $logger
+   * @param FacebookNotify $module
    * @param array $config
    */
-  public function __construct($logger, $config) {
+  public function __construct($logger, $module, $config) {
     $this->logger = $logger;
+    $this->module = $module;
+
     $this->id = $config['id'];
     $this->name =  isset($config['name']) && !empty($config['name']) ? $config['name'] : null;
 
-    $this->channelConfig = isset($config['channels']) && is_array($config['channels']) ? $config['channels'] : [];
+    $this->postChannels = isset($config['channels']['posts']) && is_array($config['channels']['posts']) ? $config['channels']['posts'] : [];
+    $this->eventChannels = isset($config['channels']['events']) && is_array($config['channels']['events']) ? $config['channels']['events'] : [];
+    $this->eventPostChannels = isset($config['channels']['event_posts']) && is_array($config['channels']['event_posts']) ? $config['channels']['event_posts'] : [];
+
     $this->channels = [];
+
+    $this->ignoreLastYoutubeFrom = isset($config['ignore_last_youtube_from']) && is_array($config['ignore_last_youtube_from']) ? $config['ignore_last_youtube_from'] : [];
+
     $this->latestPost = isset($config['latest_post']) && !empty($config['latest_post']) ? $config['latest_post'] : null;
     $this->updateEvents = isset($config['update_events']) ? ($config['update_events'] ? true : false) : false;
     $this->latestEvent = isset($config['latest_event']) && !empty($config['latest_event']) ? $config['latest_event'] : null;
@@ -85,11 +115,12 @@ class Page {
 
   /**
    * Add discord channel to announce uploads in
+   * @param string $channelName
    * @param Channel $channel
    */
-  public function addChannel($channel) {
+  public function addChannel($channelName, $channel) {
     $this->logger->info("Add announce channel ".$channel->name." to ".$this->id, ["FacebookNotify"]);
-    $this->channels[] = $channel;
+    $this->channels[$channelName] = $channel;
   }
 
   /**
@@ -180,6 +211,14 @@ class Page {
   }
 
   /**
+   * Get array of channel name strings
+   * @return string[]
+   */
+  public function getChannelNames() {
+    return array_values(array_unique(array_merge($this->postChannels, $this->eventChannels, $this->eventPostChannels)));
+  }
+
+  /**
    * Announce a message to a channel
    * @param Bot $bot
    * @param Channel $channel
@@ -198,9 +237,36 @@ class Page {
     });
   }
 
-  public function announce($bot, $message, $embed = null) {
-    foreach ($this->channels as $channel) {
-      $this->announceChannel($bot, $channel, $message, $embed);
+  public function announcePost($bot, $message, $embed = null) {
+    foreach ($this->postChannels as $channelName) {
+      if (isset($this->channels[$channelName])) {
+        $this->announceChannel($bot, $this->channels[$channelName], $message, $embed);
+      }
+      else {
+        $this->logger->info("Channel ".$channelName." not found", ["FacebookNotify"]);
+      }
+    }
+  }
+
+  public function announceEvent($bot, $message, $embed = null) {
+    foreach ($this->eventChannels as $channelName) {
+      if (isset($this->channels[$channelName])) {
+        $this->announceChannel($bot, $this->channels[$channelName], $message, $embed);
+      }
+      else {
+        $this->logger->info("Channel ".$channelName." not found", ["FacebookNotify"]);
+      }
+    }
+  }
+
+  public function announceEventPost($bot, $message, $embed = null) {
+    foreach ($this->eventPostChannels as $channelName) {
+      if (isset($this->channels[$channelName])) {
+        $this->announceChannel($bot, $this->channels[$channelName], $message, $embed);
+      }
+      else {
+        $this->logger->info("Channel ".$channelName." not found", ["FacebookNotify"]);
+      }
     }
   }
 
@@ -251,6 +317,18 @@ class Page {
       foreach ($reversePosts as $postData) {
         $idParts = explode("_", $postData['id']);
         $id = array_pop($idParts);
+
+        $url = $postData['link'];
+        if (count($this->ignoreLastYoutubeFrom) && (preg_match("~youtube.com/watch\?v=(?<id>[a-z0-9_-]+)~i", $url, $match) || preg_match("~youtu.be/(?<id>[a-z0-9_-]+)~i", $url, $match))) {
+          $videoId = $match['id'];
+          foreach ($this->ignoreLastYoutubeFrom as $videoChannelId) {
+            if ($this->module->getLastYoutube($videoChannelId) == $videoId) {
+              $this->logger->info("Skipped post ".$id." on page ".$this->id.", since it contains youtube ID ".$videoId, ["FacebookNotify"]);
+              continue 2;
+            }
+          }
+        }
+
         $this->logger->info("New post ".$id." on page ".$this->id, ["FacebookNotify"]);
 
         $image = isset($postData['full_picture']) ? $bot->getDiscord()->factory(Image::class, ["url" => $postData['full_picture']]) : null;
@@ -258,13 +336,13 @@ class Page {
         $embed = $bot->getDiscord()->factory(Embed::class, [
           "title" => $this->name,
           "image" => $image,
-          "url" => $postData['link'],
+          "url" => $url,
           "timestamp" => $postData['created_time'],
           "description" => $postData['message']
         ]); /** @var Embed $embed */
 
-        $message = "**New ".$postData['type']."**";
-        $this->announce($bot, $message, $embed);
+        $message = "**New ".$postData['type'].":**";
+        $this->announcePost($bot, $message, $embed);
       }
 
       if (!$this->updateEvents) {
@@ -276,7 +354,6 @@ class Page {
       $announceEvents = true;
 
       foreach ($data['events']['data'] as $eventData) {
-        $newEvent = false;
         $id = $eventData['id'];
 
         if (!$this->hasLatestEvent()) {
@@ -294,7 +371,7 @@ class Page {
           $this->events[$id] = $event;
         }
         else {
-          $event = $this->events[$eventData['id']];
+          $event = $this->events[$id];
         }
 
         if ($firstEvent && $announceEvents && $latestEvent->smallerThan($id)) {
@@ -303,7 +380,6 @@ class Page {
         }
 
         $event->update($this, $bot, $eventData, $announceEvents);
-
       }
     }
   }
@@ -318,10 +394,19 @@ class Page {
       $events[] = $event->getConfig();
     }
 
+    /*usort($events, function ($a, $b) {
+      return LargeInt::fromString($a->getId())->compare($b->getId());
+    });*/
+
     return [
       "id" => $this->id,
       "name" => $this->name,
-      "channels" => $this->channelConfig,
+      "channels" => [
+        "posts" => $this->postChannels,
+        "events" => $this->eventChannels,
+        "event_posts" => $this->eventPostChannels,
+      ],
+      "ignore_last_youtube_from" => $this->ignoreLastYoutubeFrom,
       "latest_post" => $this->latestPost,
       "update_events" => $this->updateEvents,
       "latest_event" => $this->latestEvent,
@@ -331,11 +416,12 @@ class Page {
 
   /**
    * Create new page
-   * @param $logger
-   * @param $id
+   * @param LoggerInterface $logger
+   * @param FacebookNotify $module
+   * @param string $id
    * @return Page
    */
-  public static function create($logger, $id) {
-    return new self($logger, ["id" => $id]);
+  public static function create($logger, $module, $id) {
+    return new self($logger, $module, ["id" => $id]);
   }
 }

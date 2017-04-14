@@ -170,24 +170,20 @@ class Event {
       return;
     }
 
-    if (!$isNew) {
-      // For now: don't announce changes to event
-      return;
-    }
-
-    $msg = "";
+    $message = "";
     if ($isNew) {
-      $msg = "@here New event";
+      $message = "@here New event";
     }
     elseif ($descrUpdated) {
-      $msg = "Event description updated";
+      $message = "Event description updated";
     }
     elseif ($placeUpdated) {
-      $msg = "Event location updated";
+      $message = "Event location updated";
     }
     elseif ($timeUpdated) {
-      $msg = "Event time updated";
+      $message = "Event time updated";
     }
+    $message = "**".$message.":**";
 
     $image = isset($data['cover']) && is_array($data['cover']) ? $bot->getDiscord()->factory(Image::class, ["url" => $data['cover']['source']]) : null; /** @var Image $image */
 
@@ -208,8 +204,13 @@ class Event {
       "fields" => $fields
     ]); /** @var Embed $embed */
 
-    $page->announce($bot, "**".$msg.":**", $embed);
-}
+    if ($isNew) {
+      $page->announceEvent($bot, $message, $embed);
+    }
+    else {
+      $page->announceEventPost($bot, $message, $embed);
+    }
+  }
 
   /**
    * Get configuration for storage
