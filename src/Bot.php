@@ -46,6 +46,11 @@ class Bot extends EventEmitter {
   protected $modules;
 
   /**
+   * @var string[]
+   */
+  protected $discordEvents;
+
+  /**
    * @var bool
    */
   protected $isReady;
@@ -65,6 +70,8 @@ class Bot extends EventEmitter {
       "loop" => $this->loop,
       "logger" => $this->logger
     ]);
+
+    $this->discordEvents = [];
 
     $this->isReady = false;
     $this->on("discord.ready", function () {
@@ -131,6 +138,30 @@ class Bot extends EventEmitter {
       // Else, trigger on ready
       $this->once("discord.ready", $callback);
     }
+  }
+
+  /**
+   * Get ID from a channel name
+   * @param string $name Format guildName/channelName
+   * @return string|null
+   */
+  public function getChannelId($name) {
+    @list($guildName, $channelName) = explode("/", $name);
+    if (empty($guildName) || is_null($channelName) || empty($channelName)) {
+      return null;
+    }
+
+    $guilds = $this->config->get("guilds");
+    if (!isset($guilds[$guildName]) || !isset($guilds[$guildName]['channels'])) {
+      return null;
+    }
+
+    $channels = $guilds[$guildName]['channels'];
+    if (!isset($channels[$channelName])) {
+      return null;
+    }
+
+    return $channels[$channelName]['channel_id'];
   }
 
   /**
@@ -211,9 +242,14 @@ class Bot extends EventEmitter {
   public function on($event, callable $listener) {
     if (preg_match("/discord.(.*)/i", $event, $match)) {
       $discordEventName = $match[1];
-      $this->discord->on($discordEventName, function (...$args) use (&$discordEventName) {
-        $this->discordEvent($discordEventName, $args);
-      });
+
+      if (!in_array($discordEventName, $this->discordEvents)) {
+        $this->discordEvents[] = $discordEventName;
+
+        $this->discord->on($discordEventName, function (...$args) use (&$discordEventName) {
+          $this->discordEvent($discordEventName, $args);
+        });
+      }
     }
 
     parent::on($event, $listener);
@@ -225,7 +261,7 @@ class Bot extends EventEmitter {
    * @param array $args
    */
   public function discordEvent($name, $args = []) {
-    $this->logger->debug("Triggered event ".$name." with ".count($args)." arguments");
+    $this->logger->debug("Triggered discord.".$name." with ".count($args)." arguments");
     $this->emit("discord.".$name, $args);
   }
 
