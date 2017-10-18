@@ -231,6 +231,13 @@ class YoutubeNotify implements ModuleInterface {
       $channelId = $channelIdNode->textContent;
       $videoId = $videoIdNode->textContent;
 
+      $dateNode = $entry->getElementsByTagName("published")->item(0);
+      $passed = $dateNode ? time()-strtotime($dateNode->textContent) : 0;
+      if ($passed > 360000) {
+        $this->logger->warning("Received old video: ".$videoId, ["YoutubeNotify"]);
+        continue;
+      }
+
       if (!isset($this->videoChannels[$channelId])) {
         $this->logger->warning("Received upload from unknown channel ".$channelId, ["YoutubeNotify"]);
         continue;
