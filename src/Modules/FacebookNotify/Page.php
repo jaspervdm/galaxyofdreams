@@ -374,6 +374,15 @@ class Page {
           $event = $this->events[$id];
         }
 
+        if (time()-strtotime($eventData['start_time']) > 360000 && !$event->isExpired()) {
+          $event->expire();
+        }
+
+        if ($event->isExpired()) {
+          // Don't track expired events
+          continue;
+        }
+
         if ($firstEvent && $announceEvents && $latestEvent->smallerThan($id)) {
           $this->latestEvent = $id;
           $firstEvent = false;

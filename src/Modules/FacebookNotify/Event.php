@@ -19,6 +19,11 @@ class Event {
   protected $id;
 
   /**
+   * @var bool
+   */
+  protected $expired;
+
+  /**
    * @var string
    */
   protected $name;
@@ -50,6 +55,7 @@ class Event {
   public function __construct($logger, $config) {
     $this->logger = $logger;
     $this->id = $config['id'];
+    $this->expired = isset($config['expired']) ? $config['expired'] : false;
     $this->name =  isset($config['name']) && !empty($config['name']) ? $config['name'] : null;
     $this->description =  isset($config['description']) && !empty($config['description']) ? $config['description'] : null;
     $this->place = isset($config['place']) && !empty($config['place']) ? $config['place'] : null;
@@ -63,6 +69,10 @@ class Event {
    */
   public function getId() {
     return $this->id;
+  }
+
+  public function isExpired() {
+    return $this->expired;
   }
 
   public function hasName() {
@@ -113,6 +123,10 @@ class Event {
     return $this->time;
   }
 
+  public function expire() {
+    $this->expired = true;
+  }
+
   /**
    * @param Page $page
    * @param Bot $bot
@@ -120,6 +134,10 @@ class Event {
    * @param bool $announceNew
    */
   public function update($page, $bot, $data, $announceNew = true) {
+    if ($this->expired) {
+      return;
+    }
+
     $isNew = !$this->hasName();
     $descrUpdated = false;
     $placeUpdated = false;
@@ -219,6 +237,7 @@ class Event {
   public function getConfig() {
     return [
       "id" => $this->id,
+      "expired" => $this->expired ? true : false,
       "name" => $this->name,
       "description" => $this->description,
       "place" => $this->place,
