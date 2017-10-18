@@ -67,6 +67,7 @@ class Bot extends EventEmitter {
 
     $this->discord = new Discord([
       "token" => $config->get("token"),
+      "loadAllMembers" => true,
       "loop" => $this->loop,
       "logger" => $this->logger
     ]);
@@ -224,10 +225,9 @@ class Bot extends EventEmitter {
     $promise->then($onFulfilled, function (Exception $e) use ($callable, $onFulfilled, $onRetry, $onRejected, &$timeout, &$attempts) {
       if ($attempts <= 1) {
         call_user_func($onRejected, $e);
+        return;
       }
-      else {
-        call_user_func($onRetry, $e, $timeout);
-      }
+      call_user_func($onRetry, $e, $timeout);
       $this->loop->addTimer($timeout, function () use ($callable, $onFulfilled, $onRetry, $onRejected, &$timeout, &$attempts) {
         $this->execute($callable, $onFulfilled, $onRetry, $onRejected, $timeout, $attempts-1);
       });
@@ -294,10 +294,11 @@ class Bot extends EventEmitter {
    */
   public function run() {
     $this->logger->info("Run bot instance");
-    foreach ($this->config->get("modules") as $moduleConfig) {
-      $this->loadModule($moduleConfig['name'], $moduleConfig['config']);
-    }
-
+    $this->loop->nextTick(function () {
+      foreach ($this->config->get("modules") as $moduleConfig) {
+        $this->loadModule($moduleConfig['name'], $moduleConfig['config']);
+      }
+    });
     $this->loop->run();
   }
 }
