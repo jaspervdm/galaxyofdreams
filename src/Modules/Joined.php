@@ -65,7 +65,7 @@ class Joined implements ModuleInterface {
         $message->channel->guild->members->fetch($userId)->then(function (Member $member) use ($message, &$userId) {
           $joined = $member->joined_at;
           $joined->setTimezone(new \DateTimeZone("GMT"));
-          $message->channel->sendMessage("<@".$userId."> joined **".$joined->diffForHumans()."** (".$joined->format("d-m-Y H:i:s").")");
+          $message->channel->sendMessage("<@".$userId."> joined **".$joined->diffForHumans(null, false, false, 4)."** (".$joined->format("d-m-Y H:i:s").")");
         });
       }
     };
